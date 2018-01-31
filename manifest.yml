@@ -1,0 +1,10 @@
+applications:
+- name: blog-api
+  path: target/demo-blog-api-0.0.1-SNAPSHOT.jar
+  routes:
+  - route: blog-api-hsakakur.cfapps.io
+  env:
+    BLOG_GITHUB_ACCESS_TOKEN: 067c10a33c68688f2a029ea7f2f20ea6e6f5bf4a
+    BLOG_GITHUB_WEBHOOK_SECRET: webhook_secret
+  services:
+    - blog-db

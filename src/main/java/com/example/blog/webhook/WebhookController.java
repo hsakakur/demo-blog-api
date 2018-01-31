@@ -10,11 +10,16 @@ import java.util.stream.StreamSupport;
 import am.ik.blog.entry.Entry;
 import am.ik.blog.entry.EntryId;
 import com.example.blog.BlogProperties;
+import com.example.blog.entry.event.EntryCreateEvent;
+import com.example.blog.entry.event.EntryDeleteEvent;
+import com.example.blog.entry.event.EntryUpdateEvent;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import reactor.core.publisher.Flux;
+import reactor.core.scheduler.Schedulers;
 
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.core.task.TaskExecutor;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -23,14 +28,15 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 public class WebhookController {
 	private final EntryFetcher entryFetcher;
+	private final TaskExecutor taskExecutor;
 	private final ApplicationEventPublisher publisher;
 	private final WebhookVerifier webhookVerifier;
 	private final ObjectMapper objectMapper;
 
-	public WebhookController(BlogProperties props, EntryFetcher entryFetcher,
-			ApplicationEventPublisher publisher, ObjectMapper objectMapper)
+	public WebhookController(BlogProperties props, EntryFetcher entryFetcher, TaskExecutor taskExecutor, ApplicationEventPublisher publisher, ObjectMapper objectMapper)
 			throws NoSuchAlgorithmException, InvalidKeyException {
 		this.entryFetcher = entryFetcher;
+		this.taskExecutor = taskExecutor;
 		this.publisher = publisher;
 		this.objectMapper = objectMapper;
 		this.webhookVerifier = new WebhookVerifier(props.getGithub().getWebhookSecret());
@@ -50,12 +56,16 @@ public class WebhookController {
 		return Flux.fromStream(commits).flatMap(commit -> {
 			Flux<EntryId> added = this.paths(commit.get("added"))
 					.flatMap(path -> this.entryFetcher.fetch(owner, repo, path)) //
+					.publishOn(Schedulers.fromExecutor(this.taskExecutor))
+					.doOnNext(entory -> publisher.publishEvent(new EntryCreateEvent(entory)))
 					.map(Entry::entryId);
 			Flux<EntryId> modified = this.paths(commit.get("modified")) //
 					.flatMap(path -> this.entryFetcher.fetch(owner, repo, path)) //
+					.doOnNext(entory -> publisher.publishEvent(new EntryUpdateEvent(entory)))
 					.map(Entry::entryId);
 			Flux<EntryId> removed = this.paths(commit.get("removed")) //
-					.map(path -> EntryId.fromFilePath(Paths.get(path)));
+					.map(path -> EntryId.fromFilePath(Paths.get(path)))
+					.doOnNext(entoryId -> publisher.publishEvent(new EntryDeleteEvent(entoryId)));
 			return added.map(id -> Collections.singletonMap("added", id.getValue())) //
 					.mergeWith(modified.map(
 							id -> Collections.singletonMap("modified", id.getValue()))) //
